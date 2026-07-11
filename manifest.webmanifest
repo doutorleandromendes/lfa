@@ -1,0 +1,16 @@
+{
+  "name": "LFA Strip Analyzer",
+  "short_name": "LFA",
+  "description": "Leitura quantitativa de testes imunocromatográficos (LFA) por perfil de intensidade.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f5f4f0",
+  "theme_color": "#1D9E75",
+  "icons": [
+    { "src": "lfa-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "lfa-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "apple-touch-icon.png", "sizes": "180x180", "type": "image/png", "purpose": "any" }
+  ]
+}
