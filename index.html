@@ -158,6 +158,21 @@ button,input,select{font-family:inherit}
 .corner-handle{position:absolute;width:22px;height:22px;border-radius:50%;background:rgba(29,158,117,.18);border:2px solid var(--acc);transform:translate(-50%,-50%);cursor:grab;pointer-events:all;touch-action:none}
 .corner-handle:active{cursor:grabbing;background:rgba(29,158,117,.35)}
 .corner-handle::after{content:'';position:absolute;top:50%;left:50%;width:4px;height:4px;border-radius:50%;background:var(--acc);transform:translate(-50%,-50%)}
+
+/* ── Recorte grosseiro ── */
+.crop-handle{position:absolute;background:rgba(29,158,117,.9);border-radius:2px;pointer-events:all;touch-action:none;z-index:5}
+.crop-edge-h{left:12%;right:12%;height:20px;margin-top:-10px;cursor:ns-resize}
+.crop-edge-v{top:12%;bottom:12%;width:20px;margin-left:-10px;cursor:ew-resize}
+.crop-edge-h::after{content:'';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:34px;height:3px;background:#fff;border-radius:2px}
+.crop-edge-v::after{content:'';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:3px;height:34px;background:#fff;border-radius:2px}
+.crop-mask{position:absolute;background:rgba(0,0,0,.5);pointer-events:none;z-index:3}
+
+/* ── Loupe (lupa estilo ultrassom) ── */
+#loupe{position:fixed;width:128px;height:128px;border-radius:50%;border:2px solid var(--acc);box-shadow:0 4px 20px rgba(0,0,0,.4);overflow:hidden;pointer-events:none;z-index:2000;display:none;background:#000}
+#loupe canvas{position:absolute;top:0;left:0;width:100%;height:100%}
+#loupeCross{position:absolute;top:50%;left:50%;width:44px;height:44px;transform:translate(-50%,-50%);pointer-events:none}
+#loupeCross::before{content:'';position:absolute;left:50%;top:0;bottom:0;width:1px;background:rgba(29,158,117,.9);transform:translateX(-50%)}
+#loupeCross::after{content:'';position:absolute;top:50%;left:0;right:0;height:1px;background:rgba(29,158,117,.9);transform:translateY(-50%)}
 .prep-preview{border-top:.5px solid var(--bdr2);padding-top:12px;margin-top:4px;display:flex;flex-direction:column;align-items:center;gap:8px}
 .prep-preview canvas{border:.5px solid var(--bdr);border-radius:3px;max-height:200px}
 .slider-row{display:flex;align-items:center;gap:8px;margin-bottom:8px}
@@ -255,6 +270,47 @@ button,input,select{font-family:inherit}
   <canvas id="camCanvas" style="display:none"></canvas>
 </div>
 
+<!-- RECORTE GROSSEIRO -->
+<div id="crop" class="prep-layout" style="display:none">
+  <div class="prep-canvas-area">
+    <div class="hint">arraste as bordas para aparar a foto e chegar perto do strip</div>
+    <div class="prep-stage" id="cropStage" style="touch-action:none">
+      <canvas id="cropCanvas"></canvas>
+      <div id="cropMaskT" class="crop-mask"></div>
+      <div id="cropMaskB" class="crop-mask"></div>
+      <div id="cropMaskL" class="crop-mask"></div>
+      <div id="cropMaskR" class="crop-mask"></div>
+      <div id="cropEdgeT" class="crop-handle crop-edge-h" data-edge="t"></div>
+      <div id="cropEdgeB" class="crop-handle crop-edge-h" data-edge="b"></div>
+      <div id="cropEdgeL" class="crop-handle crop-edge-v" data-edge="l"></div>
+      <div id="cropEdgeR" class="crop-handle crop-edge-v" data-edge="r"></div>
+    </div>
+    <div class="dims" id="cropDims"></div>
+  </div>
+  <div class="sb">
+    <div class="sb-hdr">RECORTE GROSSEIRO</div>
+    <div class="sb-sec">
+      <span class="lbl">Aparar bordas</span>
+      <div style="font-size:11px;color:var(--sub);line-height:1.7">Deslize as 4 bordas para remover o excesso da foto. Não precisa ser preciso — é só para trabalhar mais perto do strip no próximo passo.</div>
+    </div>
+    <div class="sb-sec">
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="chip-btn" onclick="cropReset()">▢ recorte cheio</button>
+        <button class="chip-btn" onclick="cropTight()">⊡ apertar no centro</button>
+      </div>
+    </div>
+    <div style="flex:1"></div>
+    <div class="cta">
+      <button class="btn-p" onclick="cropConfirm()">APARAR E CONTINUAR →</button>
+      <button class="btn-s" onclick="cropSkip()">Pular recorte</button>
+      <button class="btn-s" onclick="resetApp()">← Nova imagem</button>
+    </div>
+  </div>
+</div>
+
+<!-- LOUPE (lupa) -->
+<div id="loupe"><canvas id="loupeCanvas" width="256" height="256"></canvas><div id="loupeCross"></div></div>
+
 <!-- PREPARO -->
 <div id="prep" class="prep-layout">
   <div class="prep-canvas-area">
@@ -273,8 +329,9 @@ button,input,select{font-family:inherit}
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         <button class="chip-btn" onclick="prepAutoDetect()">↺ auto-detectar</button>
         <button class="chip-btn" onclick="prepResetQuad()">▢ retângulo cheio</button>
+        <button class="chip-btn" onclick="backToCrop()">✂ reaparar</button>
       </div>
-      <div style="font-size:10px;color:var(--mut);margin-top:6px">auto ancora na linha de controle (C). Ajuste os cantos se necessário.</div>
+      <div style="font-size:10px;color:var(--mut);margin-top:6px">auto ancora na linha de controle (C). Ajuste os cantos com a lupa se necessário.</div>
     </div>
     <div class="sb-sec">
       <span class="lbl">Rotação fina</span>
@@ -421,12 +478,14 @@ const STEP_NAMES=['upload','prep','mark','results'];
 let currentStep=0, maxStep=0;
 
 function show(s){
-  STEP_NAMES.forEach(id=>{$(id).style.display='none'});
-  const idx=STEP_NAMES.indexOf(s);
+  ['upload','crop','prep','mark','results'].forEach(id=>{const el=$(id);if(el)el.style.display='none'});
+  // 'crop' é sub-etapa do preparo → conta como índice 1
+  const idx = (s==='crop') ? 1 : STEP_NAMES.indexOf(s);
   currentStep=idx;
   if(idx>maxStep)maxStep=idx;
   if(s==='upload'){$('upload').style.display='flex'}
-  else if(s==='prep'){$('prep').style.display=window.innerWidth<=820?'grid':'grid'}
+  else if(s==='crop'){$('crop').style.display='grid'}
+  else if(s==='prep'){$('prep').style.display='grid'}
   else if(s==='mark'){$('mark').style.display='grid'}
   else{$('results').style.display='grid'}
   setSteps(idx);
@@ -792,7 +851,7 @@ function exportReport(){
 }
 
 function goBack(){show('mark')}
-function resetApp(){maxStep=0;currentStep=0;stopCamStream&&stopCamStream();imgEl=null;imgURL=null;bands=[];profileData=null;analysisResults=null;prepImg=null;prepQuad=null;prepBaseCanvas=null;$('stripImg').src='';$('rImg').src='';$('stripImg').style.filter='';$('expSlider').value=1.5;$('expVal').textContent='1.5×';renderBands();show('upload')}
+function resetApp(){maxStep=0;currentStep=0;stopCamStream&&stopCamStream();hideLoupe&&hideLoupe();cropSrcCanvas=null;imgEl=null;imgURL=null;bands=[];profileData=null;analysisResults=null;prepImg=null;prepQuad=null;prepBaseCanvas=null;$('stripImg').src='';$('rImg').src='';$('stripImg').style.filter='';$('expSlider').value=1.5;$('expVal').textContent='1.5×';renderBands();show('upload')}
 
 // ═══════════════════════════════════════════════════════════════
 //  PREPROCESSING ENGINE — align / crop / perspective / white-balance
@@ -801,26 +860,25 @@ let prepImg=null, prepURL=null, prepQuad=null, prepRot=0, prepBaseCanvas=null, p
 let prepDragIdx=-1;
 
 function prepInit(img){
-  prepImg=img;
+  // Entrada nova → passa primeiro pelo recorte grosseiro.
+  cropInit(img);
+}
+
+// Chamado após o recorte (ou skip) com o canvas já aparado.
+function prepInitFromCanvas(baseCanvas){
   prepRot=0; $('rotS').value=0; $('rotV').textContent='0°';
-  // Draw source into a working canvas (cap size for performance)
-  const maxDim=1400;
-  let w=img.naturalWidth, h=img.naturalHeight;
-  const sc=Math.min(1, maxDim/Math.max(w,h));
-  w=Math.round(w*sc); h=Math.round(h*sc);
-  const c=document.createElement('canvas'); c.width=w; c.height=h;
-  c.getContext('2d').drawImage(img,0,0,w,h);
-  prepBaseCanvas=c;
+  prepBaseCanvas=baseCanvas;
+  const w=baseCanvas.width, h=baseCanvas.height;
   // Display canvas
   const disp=$('prepCanvas'); disp.width=w; disp.height=h;
-  disp.getContext('2d').drawImage(c,0,0);
+  disp.getContext('2d').drawImage(baseCanvas,0,0);
   // Fit display: compute CSS scale
   requestAnimationFrame(()=>{
     const r=disp.getBoundingClientRect();
     prepScale=r.width/w;
-    $('prepDims').textContent=w+'×'+h+'px (origem)';
+    $('prepDims').textContent=w+'×'+h+'px (recortado)';
   });
-  $('prepDims').textContent=w+'×'+h+'px (origem)';
+  $('prepDims').textContent=w+'×'+h+'px (recortado)';
   // Default quad = central 40% vertical strip guess, then auto-detect
   prepResetQuad(true);
   prepAutoDetect();
@@ -913,33 +971,46 @@ function prepRenderOverlay(){
   });
 }
 
+let prepDragBound=false;
 function setupPrepDrag(){
   const stage=$('prepStage');
+  const clientXY=e=>({ x:(e.touches?e.touches[0].clientX:e.clientX), y:(e.touches?e.touches[0].clientY:e.clientY) });
   const getXY=e=>{
     const r=$('prepCanvas').getBoundingClientRect();
-    const cx=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
-    const cy=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
+    const c=clientXY(e);
+    const cx=c.x-r.left, cy=c.y-r.top;
     const w=prepBaseCanvas.width,h=prepBaseCanvas.height;
     return [cx/r.width*w, cy/r.height*h];
   };
   const down=e=>{
     const t=e.target;
-    if(t.classList.contains('corner-handle')){ prepDragIdx=+t.dataset.idx; e.preventDefault(); }
+    if(t.classList.contains('corner-handle')){
+      prepDragIdx=+t.dataset.idx; e.preventDefault();
+      const [x,y]=getXY(e); const c=clientXY(e);
+      showLoupe(c.x,c.y,x,y);
+    }
   };
   const move=e=>{
     if(prepDragIdx<0)return;
     const [x,y]=getXY(e);
     const w=prepBaseCanvas.width,h=prepBaseCanvas.height;
-    prepQuad[prepDragIdx]=[Math.max(0,Math.min(w,x)),Math.max(0,Math.min(h,y))];
-    prepRenderOverlay(); prepUpdatePreview(); e.preventDefault();
+    const nx=Math.max(0,Math.min(w,x)), ny=Math.max(0,Math.min(h,y));
+    prepQuad[prepDragIdx]=[nx,ny];
+    prepRenderOverlay(); prepUpdatePreview();
+    const c=clientXY(e); showLoupe(c.x,c.y,nx,ny);
+    e.preventDefault();
   };
-  const up=()=>{prepDragIdx=-1;};
+  const up=()=>{ if(prepDragIdx>=0){ prepDragIdx=-1; hideLoupe(); } };
+  // Evita registrar listeners de window duplicados se setupPrepDrag rodar 2×
   stage.addEventListener('mousedown',down);
-  window.addEventListener('mousemove',move);
-  window.addEventListener('mouseup',up);
   stage.addEventListener('touchstart',down,{passive:false});
-  window.addEventListener('touchmove',move,{passive:false});
-  window.addEventListener('touchend',up);
+  if(!prepDragBound){
+    window.addEventListener('mousemove',move);
+    window.addEventListener('mouseup',up);
+    window.addEventListener('touchmove',move,{passive:false});
+    window.addEventListener('touchend',up);
+    prepDragBound=true;
+  }
 }
 
 // ── Homography (DLT) ──
@@ -1114,6 +1185,121 @@ function capturePhoto(){
 }
 
 window.addEventListener('resize',()=>{ if(camStream)positionCamGuide(); });
+
+
+// ═══════════════════════════════════════════════════════════════
+//  RECORTE GROSSEIRO (coarse crop) — antes dos cantos de perspectiva
+// ═══════════════════════════════════════════════════════════════
+let cropSrcCanvas=null;           // imagem carregada (capada em maxDim)
+let cropRect={l:0,t:0,r:1,b:1};   // fração [0..1] das bordas
+let cropDragEdge=null;
+
+function cropInit(img){
+  const maxDim=1600;
+  let w=img.naturalWidth, h=img.naturalHeight;
+  const sc=Math.min(1, maxDim/Math.max(w,h));
+  w=Math.round(w*sc); h=Math.round(h*sc);
+  const c=document.createElement('canvas'); c.width=w; c.height=h;
+  c.getContext('2d').drawImage(img,0,0,w,h);
+  cropSrcCanvas=c;
+  const disp=$('cropCanvas'); disp.width=w; disp.height=h;
+  disp.getContext('2d').drawImage(c,0,0);
+  cropReset();
+  show('crop');
+  setupCropDrag();
+  $('cropDims').textContent=w+'×'+h+'px';
+}
+
+function backToCrop(){ if(cropSrcCanvas){ show('crop'); cropRenderEdges(); } }
+function cropReset(){ cropRect={l:0.02,t:0.02,r:0.98,b:0.98}; cropRenderEdges(); }
+function cropTight(){ cropRect={l:0.28,t:0.10,r:0.72,b:0.90}; cropRenderEdges(); }
+
+function cropRenderEdges(){
+  const R=cropRect;
+  // Posiciona as 4 bordas (em %) sobre o stage
+  $('cropEdgeT').style.top=(R.t*100)+'%';
+  $('cropEdgeB').style.top=(R.b*100)+'%';
+  $('cropEdgeL').style.left=(R.l*100)+'%';
+  $('cropEdgeR').style.left=(R.r*100)+'%';
+  // Ajusta extensão das bordas horizontais/verticais ao retângulo
+  $('cropEdgeT').style.left=(R.l*100)+'%'; $('cropEdgeT').style.right=((1-R.r)*100)+'%';
+  $('cropEdgeB').style.left=(R.l*100)+'%'; $('cropEdgeB').style.right=((1-R.r)*100)+'%';
+  $('cropEdgeL').style.top=(R.t*100)+'%'; $('cropEdgeL').style.bottom=((1-R.b)*100)+'%';
+  $('cropEdgeR').style.top=(R.t*100)+'%'; $('cropEdgeR').style.bottom=((1-R.b)*100)+'%';
+  // Máscaras escurecendo fora do recorte
+  const mT=$('cropMaskT'),mB=$('cropMaskB'),mL=$('cropMaskL'),mR=$('cropMaskR');
+  mT.style.cssText='position:absolute;left:0;right:0;top:0;height:'+(R.t*100)+'%;background:rgba(0,0,0,.5);pointer-events:none;z-index:3';
+  mB.style.cssText='position:absolute;left:0;right:0;bottom:0;top:'+(R.b*100)+'%;background:rgba(0,0,0,.5);pointer-events:none;z-index:3';
+  mL.style.cssText='position:absolute;left:0;width:'+(R.l*100)+'%;top:'+(R.t*100)+'%;bottom:'+((1-R.b)*100)+'%;background:rgba(0,0,0,.5);pointer-events:none;z-index:3';
+  mR.style.cssText='position:absolute;right:0;left:'+(R.r*100)+'%;top:'+(R.t*100)+'%;bottom:'+((1-R.b)*100)+'%;background:rgba(0,0,0,.5);pointer-events:none;z-index:3';
+}
+
+function setupCropDrag(){
+  const stage=$('cropStage');
+  const frac=e=>{
+    const r=$('cropCanvas').getBoundingClientRect();
+    const cx=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
+    const cy=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
+    return { x:Math.max(0,Math.min(1,cx/r.width)), y:Math.max(0,Math.min(1,cy/r.height)) };
+  };
+  const down=e=>{
+    const t=e.target;
+    if(t.classList&&t.classList.contains('crop-handle')){ cropDragEdge=t.dataset.edge; e.preventDefault(); }
+  };
+  const move=e=>{
+    if(!cropDragEdge)return;
+    const f=frac(e), R=cropRect, gap=0.05;
+    if(cropDragEdge==='t') R.t=Math.min(f.y, R.b-gap);
+    else if(cropDragEdge==='b') R.b=Math.max(f.y, R.t+gap);
+    else if(cropDragEdge==='l') R.l=Math.min(f.x, R.r-gap);
+    else if(cropDragEdge==='r') R.r=Math.max(f.x, R.l+gap);
+    cropRenderEdges(); e.preventDefault();
+  };
+  const up=()=>{ cropDragEdge=null; };
+  stage.addEventListener('mousedown',down);
+  window.addEventListener('mousemove',move);
+  window.addEventListener('mouseup',up);
+  stage.addEventListener('touchstart',down,{passive:false});
+  window.addEventListener('touchmove',move,{passive:false});
+  window.addEventListener('touchend',up);
+}
+
+function cropProduceCanvas(){
+  const src=cropSrcCanvas, R=cropRect;
+  const sx=Math.round(R.l*src.width), sy=Math.round(R.t*src.height);
+  const sw=Math.round((R.r-R.l)*src.width), sh=Math.round((R.b-R.t)*src.height);
+  const out=document.createElement('canvas'); out.width=sw; out.height=sh;
+  out.getContext('2d').drawImage(src, sx,sy,sw,sh, 0,0,sw,sh);
+  return out;
+}
+
+function cropConfirm(){ prepInitFromCanvas(cropProduceCanvas()); }
+function cropSkip(){ prepInitFromCanvas(cropSrcCanvas); }
+
+// ═══════════════════════════════════════════════════════════════
+//  LOUPE — lupa que segue o dedo ao arrastar um canto (estilo ultrassom)
+// ═══════════════════════════════════════════════════════════════
+const LOUPE_ZOOM=3.2;   // ampliação
+function showLoupe(clientX, clientY, canvasX, canvasY){
+  const lp=$('loupe'), lc=$('loupeCanvas');
+  const src=prepBaseCanvas; if(!src)return;
+  const D=lc.width; // 256 buffer
+  const ctx=lc.getContext('2d');
+  ctx.clearRect(0,0,D,D);
+  // região da imagem a ampliar (em px do prepBaseCanvas)
+  const half=(D/2)/LOUPE_ZOOM;
+  ctx.imageSmoothingEnabled=false;
+  ctx.fillStyle='#000'; ctx.fillRect(0,0,D,D);
+  ctx.drawImage(src, canvasX-half, canvasY-half, half*2, half*2, 0,0,D,D);
+  // posiciona a lupa acima-esquerda do dedo (offset para não ficar sob ele)
+  const off=90;
+  let lx=clientX-64, ly=clientY-off-128;
+  if(ly<8){ ly=clientY+off; }            // se não cabe acima, joga abaixo
+  lx=Math.max(8, Math.min(window.innerWidth-136, lx));
+  lp.style.left=lx+'px'; lp.style.top=ly+'px';
+  lp.style.display='block';
+}
+function hideLoupe(){ const lp=$('loupe'); if(lp)lp.style.display='none'; }
 
 </script>
 </body>
