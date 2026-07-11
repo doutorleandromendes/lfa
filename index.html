@@ -155,14 +155,15 @@ button,input,select{font-family:inherit}
 .prep-stage{position:relative;display:inline-block;box-shadow:0 4px 24px rgba(0,0,0,.10);border-radius:4px}
 .prep-stage canvas{display:block;max-height:500px;max-width:100%;border-radius:4px}
 .prep-svg{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none}
-.corner-handle{position:absolute;width:22px;height:22px;border-radius:50%;background:rgba(29,158,117,.18);border:2px solid var(--acc);transform:translate(-50%,-50%);cursor:grab;pointer-events:all;touch-action:none}
+.corner-handle{position:absolute;width:26px;height:26px;border-radius:50%;background:rgba(29,158,117,.22);border:2px solid var(--acc);transform:translate(-50%,-50%);cursor:grab;pointer-events:all;touch-action:none;z-index:10}
+.corner-handle::before{content:'';position:absolute;top:50%;left:50%;width:56px;height:56px;transform:translate(-50%,-50%);border-radius:50%}
 .corner-handle:active{cursor:grabbing;background:rgba(29,158,117,.35)}
 .corner-handle::after{content:'';position:absolute;top:50%;left:50%;width:4px;height:4px;border-radius:50%;background:var(--acc);transform:translate(-50%,-50%)}
 
 /* ── Recorte grosseiro ── */
 .crop-handle{position:absolute;background:rgba(29,158,117,.9);border-radius:2px;pointer-events:all;touch-action:none;z-index:5}
-.crop-edge-h{left:12%;right:12%;height:20px;margin-top:-10px;cursor:ns-resize}
-.crop-edge-v{top:12%;bottom:12%;width:20px;margin-left:-10px;cursor:ew-resize}
+.crop-edge-h{left:12%;right:12%;height:28px;margin-top:-14px;cursor:ns-resize}
+.crop-edge-v{top:12%;bottom:12%;width:28px;margin-left:-14px;cursor:ew-resize}
 .crop-edge-h::after{content:'';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:34px;height:3px;background:#fff;border-radius:2px}
 .crop-edge-v::after{content:'';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:3px;height:34px;background:#fff;border-radius:2px}
 .crop-mask{position:absolute;background:rgba(0,0,0,.5);pointer-events:none;z-index:3}
@@ -212,7 +213,8 @@ button,input,select{font-family:inherit}
   .dz{width:100%;max-width:100%}
   #upload{padding:20px 14px}
   /* Handles maiores no touch */
-  .corner-handle{width:30px;height:30px}
+  .corner-handle{width:32px;height:32px}
+  .corner-handle::before{width:64px;height:64px}
 }
 @media (max-width:820px) and (orientation:landscape){
   .prep-stage canvas,.img-wrap img{max-height:70vh}
@@ -315,7 +317,7 @@ button,input,select{font-family:inherit}
 <div id="prep" class="prep-layout">
   <div class="prep-canvas-area">
     <div class="hint">arraste os 4 cantos para enquadrar a membrana (janela de leitura)</div>
-    <div class="prep-stage" id="prepStage">
+    <div class="prep-stage" id="prepStage" style="touch-action:none">
       <canvas id="prepCanvas"></canvas>
       <svg class="prep-svg" id="prepSvg"></svg>
       <div id="prepHandles"></div>
@@ -951,6 +953,7 @@ function prepEffectiveQuad(){
   return prepQuad.map(([x,y])=>{const dx=x-cx,dy=y-cy;return [cx+dx*cos-dy*sin, cy+dx*sin+dy*cos];});
 }
 
+let prepHandleEls=[];
 function prepRenderOverlay(){
   const svg=$('prepSvg'), hbox=$('prepHandles');
   const c=prepBaseCanvas; if(!c)return;
@@ -959,56 +962,93 @@ function prepRenderOverlay(){
   svg.setAttribute('viewBox',`0 0 ${w} ${h}`);
   const pts=q.map(p=>p.join(',')).join(' ');
   svg.innerHTML=`<polygon points="${pts}" fill="rgba(29,158,117,.08)" stroke="#1D9E75" stroke-width="${Math.max(1.5,w/400)}" stroke-dasharray="${w/90},${w/140}"/>`;
-  // Handles positioned by percentage over the stage
-  hbox.innerHTML='';
-  prepQuad.forEach((p,i)=>{
-    const hd=document.createElement('div');
-    hd.className='corner-handle';
-    hd.style.left=(p[0]/w*100)+'%';
-    hd.style.top=(p[1]/h*100)+'%';
-    hd.dataset.idx=i;
-    hbox.appendChild(hd);
-  });
+  // Cria os handles UMA vez; depois só reposiciona (não recria — evita perder
+  // o alvo do toque no meio do arraste).
+  if(prepHandleEls.length!==prepQuad.length){
+    hbox.innerHTML='';
+    prepHandleEls=[];
+    prepQuad.forEach((p,i)=>{
+      const hd=document.createElement('div');
+      hd.className='corner-handle';
+      hd.dataset.idx=i;
+      hbox.appendChild(hd);
+      prepHandleEls.push(hd);
+    });
+  }
+  prepPositionHandles();
+}
+// Só move os handles existentes (barato, sem recriar DOM)
+function prepPositionHandles(){
+  const c=prepBaseCanvas; if(!c)return;
+  const w=c.width,h=c.height;
+  for(let i=0;i<prepHandleEls.length;i++){
+    const p=prepQuad[i];
+    prepHandleEls[i].style.left=(p[0]/w*100)+'%';
+    prepHandleEls[i].style.top=(p[1]/h*100)+'%';
+  }
+}
+// Atualiza só o polígono (durante o arraste — não toca nos handles)
+function prepUpdatePolygon(){
+  const svg=$('prepSvg'), c=prepBaseCanvas; if(!c)return;
+  const q=prepEffectiveQuad(), w=c.width;
+  const pts=q.map(p=>p.join(',')).join(' ');
+  const poly=svg.querySelector('polygon');
+  if(poly) poly.setAttribute('points',pts);
+  else prepRenderOverlay();
 }
 
-let prepDragBound=false;
+let prepDragBound=false, prepDragOffX=0, prepDragOffY=0, prepPreviewRAF=0;
 function setupPrepDrag(){
   const stage=$('prepStage');
-  const clientXY=e=>({ x:(e.touches?e.touches[0].clientX:e.clientX), y:(e.touches?e.touches[0].clientY:e.clientY) });
-  const getXY=e=>{
+  // Converte coords de tela → coords do prepBaseCanvas
+  const toCanvas=(clientX,clientY)=>{
     const r=$('prepCanvas').getBoundingClientRect();
-    const c=clientXY(e);
-    const cx=c.x-r.left, cy=c.y-r.top;
     const w=prepBaseCanvas.width,h=prepBaseCanvas.height;
-    return [cx/r.width*w, cy/r.height*h];
+    return [ (clientX-r.left)/r.width*w, (clientY-r.top)/r.height*h ];
   };
   const down=e=>{
     const t=e.target;
-    if(t.classList.contains('corner-handle')){
-      prepDragIdx=+t.dataset.idx; e.preventDefault();
-      const [x,y]=getXY(e); const c=clientXY(e);
-      showLoupe(c.x,c.y,x,y);
-    }
+    if(!t.classList||!t.classList.contains('corner-handle'))return;
+    prepDragIdx=+t.dataset.idx;
+    // Captura o offset entre o dedo e o centro atual do handle, para o canto
+    // NÃO pular para o dedo no primeiro toque — movimento fino desde o início.
+    const [cx,cy]=toCanvas(e.clientX,e.clientY);
+    prepDragOffX=prepQuad[prepDragIdx][0]-cx;
+    prepDragOffY=prepQuad[prepDragIdx][1]-cy;
+    // Captura o ponteiro: todos os eventos vêm para cá mesmo saindo do handle
+    if(t.setPointerCapture && e.pointerId!=null){ try{ t.setPointerCapture(e.pointerId); }catch(_){} }
+    showLoupe(e.clientX,e.clientY, prepQuad[prepDragIdx][0], prepQuad[prepDragIdx][1]);
+    e.preventDefault();
   };
   const move=e=>{
     if(prepDragIdx<0)return;
-    const [x,y]=getXY(e);
+    const [cx,cy]=toCanvas(e.clientX,e.clientY);
     const w=prepBaseCanvas.width,h=prepBaseCanvas.height;
-    const nx=Math.max(0,Math.min(w,x)), ny=Math.max(0,Math.min(h,y));
+    const nx=Math.max(0,Math.min(w,cx+prepDragOffX));
+    const ny=Math.max(0,Math.min(h,cy+prepDragOffY));
     prepQuad[prepDragIdx]=[nx,ny];
-    prepRenderOverlay(); prepUpdatePreview();
-    const c=clientXY(e); showLoupe(c.x,c.y,nx,ny);
+    // Atualização barata durante o arraste: só polígono + posição dos handles.
+    prepUpdatePolygon();
+    prepPositionHandles();
+    showLoupe(e.clientX,e.clientY,nx,ny);
+    // A prévia do strip retificado (cara) é adiada via rAF — throttle.
+    if(!prepPreviewRAF){
+      prepPreviewRAF=requestAnimationFrame(()=>{ prepPreviewRAF=0; prepUpdatePreview(); });
+    }
     e.preventDefault();
   };
-  const up=()=>{ if(prepDragIdx>=0){ prepDragIdx=-1; hideLoupe(); } };
-  // Evita registrar listeners de window duplicados se setupPrepDrag rodar 2×
-  stage.addEventListener('mousedown',down);
-  stage.addEventListener('touchstart',down,{passive:false});
+  const up=e=>{
+    if(prepDragIdx<0)return;
+    prepDragIdx=-1; hideLoupe();
+    prepUpdatePreview();
+  };
+  // Pointer Events cobrem touch + mouse + caneta de forma unificada e são mais
+  // responsivos no iOS que touch events (sem delay de 300ms, sem gesto duplo).
+  stage.addEventListener('pointerdown',down);
   if(!prepDragBound){
-    window.addEventListener('mousemove',move);
-    window.addEventListener('mouseup',up);
-    window.addEventListener('touchmove',move,{passive:false});
-    window.addEventListener('touchend',up);
+    window.addEventListener('pointermove',move,{passive:false});
+    window.addEventListener('pointerup',up);
+    window.addEventListener('pointercancel',up);
     prepDragBound=true;
   }
 }
@@ -1234,34 +1274,43 @@ function cropRenderEdges(){
   mR.style.cssText='position:absolute;right:0;left:'+(R.r*100)+'%;top:'+(R.t*100)+'%;bottom:'+((1-R.b)*100)+'%;background:rgba(0,0,0,.5);pointer-events:none;z-index:3';
 }
 
+let cropDragBound=false, cropDragOff=0;
 function setupCropDrag(){
   const stage=$('cropStage');
-  const frac=e=>{
+  const frac=(clientX,clientY)=>{
     const r=$('cropCanvas').getBoundingClientRect();
-    const cx=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
-    const cy=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
-    return { x:Math.max(0,Math.min(1,cx/r.width)), y:Math.max(0,Math.min(1,cy/r.height)) };
+    return { x:Math.max(0,Math.min(1,(clientX-r.left)/r.width)), y:Math.max(0,Math.min(1,(clientY-r.top)/r.height)) };
   };
   const down=e=>{
     const t=e.target;
-    if(t.classList&&t.classList.contains('crop-handle')){ cropDragEdge=t.dataset.edge; e.preventDefault(); }
+    if(!t.classList||!t.classList.contains('crop-handle'))return;
+    cropDragEdge=t.dataset.edge;
+    // offset dedo→borda para não pular no primeiro toque
+    const f=frac(e.clientX,e.clientY), R=cropRect;
+    if(cropDragEdge==='t') cropDragOff=R.t-f.y;
+    else if(cropDragEdge==='b') cropDragOff=R.b-f.y;
+    else if(cropDragEdge==='l') cropDragOff=R.l-f.x;
+    else if(cropDragEdge==='r') cropDragOff=R.r-f.x;
+    if(t.setPointerCapture && e.pointerId!=null){ try{ t.setPointerCapture(e.pointerId); }catch(_){} }
+    e.preventDefault();
   };
   const move=e=>{
     if(!cropDragEdge)return;
-    const f=frac(e), R=cropRect, gap=0.05;
-    if(cropDragEdge==='t') R.t=Math.min(f.y, R.b-gap);
-    else if(cropDragEdge==='b') R.b=Math.max(f.y, R.t+gap);
-    else if(cropDragEdge==='l') R.l=Math.min(f.x, R.r-gap);
-    else if(cropDragEdge==='r') R.r=Math.max(f.x, R.l+gap);
+    const f=frac(e.clientX,e.clientY), R=cropRect, gap=0.05;
+    if(cropDragEdge==='t') R.t=Math.max(0,Math.min(f.y+cropDragOff, R.b-gap));
+    else if(cropDragEdge==='b') R.b=Math.min(1,Math.max(f.y+cropDragOff, R.t+gap));
+    else if(cropDragEdge==='l') R.l=Math.max(0,Math.min(f.x+cropDragOff, R.r-gap));
+    else if(cropDragEdge==='r') R.r=Math.min(1,Math.max(f.x+cropDragOff, R.l+gap));
     cropRenderEdges(); e.preventDefault();
   };
   const up=()=>{ cropDragEdge=null; };
-  stage.addEventListener('mousedown',down);
-  window.addEventListener('mousemove',move);
-  window.addEventListener('mouseup',up);
-  stage.addEventListener('touchstart',down,{passive:false});
-  window.addEventListener('touchmove',move,{passive:false});
-  window.addEventListener('touchend',up);
+  stage.addEventListener('pointerdown',down);
+  if(!cropDragBound){
+    window.addEventListener('pointermove',move,{passive:false});
+    window.addEventListener('pointerup',up);
+    window.addEventListener('pointercancel',up);
+    cropDragBound=true;
+  }
 }
 
 function cropProduceCanvas(){
