@@ -789,30 +789,8 @@ function exportReport(){
   ctx.fillText('LFA Strip Analyzer · Lab Infectologia Especializada · Dr. Leandro Mendes',RW-22,44);
   ctx.textAlign='left';
 
-  const bY=70,bH=RH-78,p1w=170,p3w=296,p2x=p1w+14,p2w=RW-p1w-p3w-24;
-
-  // Strip panel bg
-  ctx.fillStyle='#ffffff';ctx.fillRect(8,bY,p1w-14,bH);
-  ctx.strokeStyle='rgba(0,0,0,.08)';ctx.lineWidth=.5;ctx.strokeRect(8,bY,p1w-14,bH);
-
-  // Strip image
-  const sw=p1w-38,sh=bH-44;
-  const aspect=imgEl.naturalHeight/imgEl.naturalWidth;
-  let dw=sw,dh=sw*aspect;if(dh>sh){dh=sh;dw=sh/aspect}
-  const ix=8+(p1w-14)/2-dw/2,iy=bY+18;
-  ctx.fillStyle='rgba(0,0,0,.04)';ctx.fillRect(ix,iy,dw,dh);
-  ctx.drawImage(imgEl,ix,iy,dw,dh);
-  ctx.strokeStyle='rgba(0,0,0,.1)';ctx.lineWidth=.5;ctx.strokeRect(ix,iy,dw,dh);
-
-  res.forEach(b=>{
-    const ly=iy+b.frac*dh;
-    ctx.strokeStyle=b.color;ctx.lineWidth=b.isDerived?1:2;ctx.globalAlpha=b.isDerived?.35:.8;
-    ctx.beginPath();ctx.moveTo(ix,ly);ctx.lineTo(ix+dw,ly);ctx.stroke();
-    ctx.globalAlpha=1;ctx.fillStyle=b.color;ctx.font='bold 9px monospace';ctx.textAlign='right';
-    ctx.fillText(b.name,ix+dw-3,ly-2);ctx.textAlign='left';
-  });
-  ctx.fillStyle='#9ca3af';ctx.font='9px monospace';ctx.textAlign='center';
-  ctx.fillText('strip',8+(p1w-14)/2,bY+bH-8);ctx.textAlign='left';
+  // Sem foto do strip no laudo: gráfico ocupa a área à esquerda
+  const bY=70,bH=RH-78,p3w=296,p2x=8,p2w=RW-p3w-18;
 
   // Chart panel
   ctx.fillStyle='#ffffff';ctx.fillRect(p2x,bY,p2w,bH);
@@ -885,9 +863,51 @@ function exportReport(){
   ctx.fillText('LFA Strip Analyzer · Canal R−G · Background correction: percentile 15% · Janela: ±'+Math.round(HW*100)+'% · '+now.toLocaleString('pt-BR'),RW/2,RH-4);
   ctx.textAlign='left';
 
-  const link=document.createElement('a');
-  link.download='lfa_relatorio_'+(tn.replace(/\s+/g,'_'))+'_'+now.toISOString().slice(0,10)+'.png';
-  link.href=c.toDataURL('image/png');link.click();
+  const fname='lfa_relatorio_'+(tn.replace(/[^\p{L}\p{N}\-]+/gu,'_'))+'_'+now.toISOString().slice(0,10)+'.png';
+  deliverPng(c,fname,tn);
+}
+
+// Entrega do PNG. No iOS (sobretudo PWA standalone) <a download> com data-URL
+// navega para a imagem em tela cheia sem botão de voltar → app "trava".
+// Ordem: Web Share (arquivo) → download via blob URL (desktop) → overlay p/ salvar.
+// Blob gerado de forma SÍNCRONA para não perder a ativação do gesto (exigida pelo share).
+function deliverPng(c,fname,title){
+  const dataURL=c.toDataURL('image/png');
+  const bin=atob(dataURL.split(',')[1]),u8=new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++)u8[i]=bin.charCodeAt(i);
+  const blob=new Blob([u8],{type:'image/png'});
+  const isIOS=/iP(hone|ad|od)/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+  const standalone=window.matchMedia('(display-mode: standalone)').matches||navigator.standalone===true;
+  let file=null;try{file=new File([blob],fname,{type:'image/png'})}catch(e){}
+  if(file&&navigator.canShare&&navigator.canShare({files:[file]})&&(isIOS||standalone||/Android/i.test(navigator.userAgent))){
+    navigator.share({files:[file],title:'LFA — '+title}).catch(err=>{
+      if(err&&err.name==='AbortError')return; // usuário cancelou
+      showPngOverlay(dataURL,fname);
+    });
+    return;
+  }
+  if(!isIOS&&!standalone){
+    const url=URL.createObjectURL(blob),a=document.createElement('a');
+    a.href=url;a.download=fname;document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),4000);
+    return;
+  }
+  showPngOverlay(dataURL,fname);
+}
+
+function showPngOverlay(dataURL,fname){
+  let ov=document.getElementById('pngOverlay');if(ov)ov.remove();
+  ov=document.createElement('div');ov.id='pngOverlay';
+  ov.style.cssText='position:fixed;inset:0;z-index:2000;background:rgba(0,0,0,.88);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:max(env(safe-area-inset-top),16px) 16px max(env(safe-area-inset-bottom),16px)';
+  const msg=document.createElement('div');
+  msg.style.cssText='color:#fff;font:12px monospace;text-align:center';
+  msg.textContent='Toque e segure na imagem → "Salvar na Fotos" ou "Compartilhar"';
+  const img=document.createElement('img');img.src=dataURL;img.alt=fname;
+  img.style.cssText='max-width:100%;max-height:70vh;object-fit:contain;background:#fff;border-radius:4px;-webkit-touch-callout:default';
+  const btn=document.createElement('button');btn.className='btn-s';btn.textContent='✕ Fechar';
+  btn.style.cssText='width:auto;padding:10px 20px;background:#111;border-color:#444;color:#eee';
+  btn.onclick=()=>ov.remove();
+  ov.append(msg,img,btn);document.body.appendChild(ov);
 }
 
 function goBack(){show('mark')}
